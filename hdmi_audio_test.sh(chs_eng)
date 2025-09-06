@@ -1,0 +1,135 @@
+#!/system/bin/sh
+# Android-x86 HDMI 声音修复脚本 (Martin Kevin https://space.bilibili.com/375774434)
+
+SAMPLE="/data/local/tmp/sample.wav"
+CONF="/data/local/tmp/hdmi_audio.conf"
+INIT_SCRIPT="/system/etc/init.sh"
+
+# 语言选择
+echo "请选择语言 (1-中文, 2-English): "
+read lang_choice
+
+# 设置文本变量
+if [ "$lang_choice" = "2" ]; then
+    # 英文文本
+    START_TEXT="=== HDMI Audio Fix Tool ==="
+    ERROR_NOT_FOUND="Error: Test audio file not found: $SAMPLE"
+    ERROR_PREPARE="Please put a sample.wav file in /data/local/tmp/ first."
+    LOADED_CONFIG="Previous configuration loaded: CARD= DEV="
+    PLAYING_TEST="Playing test audio..."
+    TEST_COMPLETE="Test complete"
+    ITERATING="=== Iterating HDMI PCM Devices ==="
+    TESTING_TEXT=">>> Testing plughw:0,"
+    INPUT_DEV="Please enter the PCM device number that had sound (e.g., 7): "
+    CONFIG_SAVED="Configuration saved to $CONF"
+    WRITING_INIT="=== Writing to init script ($INIT_SCRIPT) ==="
+    MOD_COMPLETE="Modification complete. HDMI audio should work automatically after reboot."
+    MOD_SKIPPED="The init script already has HDMI fix configuration, skipping."
+else
+    # 中文文本
+    START_TEXT="=== HDMI 声音修复工具 ==="
+    ERROR_NOT_FOUND="错误: 测试音频文件不存在: $SAMPLE"
+    ERROR_PREPARE="请先准备一个 sample.wav 放到 /data/local/tmp/"
+    LOADED_CONFIG="已加载上次配置: CARD= DEV="
+    PLAYING_TEST="正在播放测试音频..."
+    TEST_COMPLETE="测试完成"
+    ITERATING="=== 遍历测试 HDMI PCM 设备 ==="
+    TESTING_TEXT=">>> 正在测试 plughw:0,"
+    INPUT_DEV="请输入刚才有声音的 PCM 设备号 (例如 7): "
+    CONFIG_SAVED="配置已保存到 $CONF"
+    WRITING_INIT="=== 写入启动脚本 ($INIT_SCRIPT) ==="
+    MOD_COMPLETE="修改完成，重启后 HDMI 声音应自动生效。"
+    MOD_SKIPPED="启动脚本已经存在 HDMI 修复配置，跳过写入。"
+fi
+
+echo "$START_TEXT"
+
+# 确认 sample.wav 存在
+if [ ! -f "$SAMPLE" ]; then
+    echo "$ERROR_NOT_FOUND"
+    echo "$ERROR_PREPARE"
+    exit 1
+fi
+
+# 默认 HDMI 声卡是 0
+CARD=0
+
+# 尝试加载上次配置
+if [ -f "$CONF" ]; then
+    . "$CONF"
+    echo "$LOADED_CONFIG"
+    echo "$PLAYING_TEST"
+    alsa_amixer -c$CARD set 'IEC958',0 on
+    alsa_amixer -c$CARD set 'IEC958',1 on
+    alsa_amixer -c$CARD set 'IEC958',2 on
+    alsa_amixer -c$CARD set 'IEC958',3 on
+    alsa_aplay -Dplughw:${CARD},${DEV} "$SAMPLE"
+    echo "$TEST_COMPLETE"
+    exit 0
+fi
+
+# 激活 HDMI 通道
+for ch in 0 1 2 3; do
+    alsa_amixer -c$CARD set 'IEC958',$ch on >/dev/null 2>&1
+done
+
+echo ""
+echo "$ITERATING"
+DEVICES="3 7 8 9 10"
+for dev in $DEVICES; do
+    echo "${TESTING_TEXT}${dev} ..."
+    alsa_aplay -Dplughw:${CARD},${dev} "$SAMPLE" >/dev/null 2>&1
+    sleep 2
+done
+
+echo ""
+echo -n "$INPUT_DEV"
+read DEV
+
+cat > "$CONF" <<EOF
+CARD=$CARD
+DEV=$DEV
+EOF
+
+echo "$CONFIG_SAVED"
+
+echo ""
+echo "$WRITING_INIT"
+mount -o remount,rw /system
+
+cp "$INIT_SCRIPT" "$INIT_SCRIPT.bak"
+
+# 检查是否已经写入过
+if grep -q "HDMI 声音修复" "$INIT_SCRIPT"; then
+    echo ""
+    if [ "$LANG_CHOICE" = "2" ]; then
+        echo "HDMI fix already exists in $INIT_SCRIPT."
+        echo "Do you want to overwrite it? (y/n): "
+    else
+        echo "启动脚本已经存在 HDMI 修复配置。"
+        echo "是否覆盖？(y/n): "
+    fi
+    read OVERWRITE
+    if [ "$OVERWRITE" != "y" ] && [ "$OVERWRITE" != "Y" ]; then
+        echo "$MSG_SKIP_WRITE"
+        exit 0
+    fi
+fi
+
+# 写入 init.sh（覆盖或新写入）
+cat >> "$INIT_SCRIPT" <<EOF
+
+# HDMI 声音修复 (自动生成)
+alsa_amixer -c$CARD set 'IEC958',0 on
+alsa_amixer -c$CARD set 'IEC958',1 on
+alsa_amixer -c$CARD set 'IEC958',2 on
+alsa_amixer -c$CARD set 'IEC958',3 on
+
+# 修复 PCM 软链接
+if [ -e /dev/snd/pcmC${CARD}D3p ]; then
+    mv /dev/snd/pcmC${CARD}D3p /dev/snd/pcmC${CARD}D3p.original
+fi
+ln -sf /dev/snd/pcmC${CARD}D${DEV}p /dev/snd/pcmC${CARD}D3p
+EOF
+
+echo "$MSG_MODIFY_DONE"
