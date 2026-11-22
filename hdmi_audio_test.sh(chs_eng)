@@ -1,172 +1,20 @@
 #!/system/bin/sh
-# Android-x86 HDMI 声音修复脚本 (v20260405)
+# ============================================================================
+# 【已弃用】本文件仅为兼容旧教程中的直链而保留。
+#
+# 这个 bilingual 版本功能已全部并入 hdmi_fix_v2.sh（v3.0），
+# 语言选择在那边同样保留（输入 2 切换英文）。
+# 本脚本会把所有参数原样转发过去。
+# ============================================================================
 
-# 【警告】执行此脚本可能导致：电视成精、邻居敲门、或者耳机里传出**的声音。
+DIR=$(dirname "$0")
+TARGET="$DIR/hdmi_fix_v2.sh"
 
-SAMPLE="/data/local/tmp/sample.wav"
-CONF="/data/local/tmp/hdmi_audio.conf"
-INIT_SCRIPT="/system/etc/init.sh"
-TAG_START="# --- HDMI_FIX_START ---"
-TAG_END="# --- HDMI_FIX_END ---"
-
-# --- 自动探测 HDMI 声卡 ID ---
-DETECT_CARD=$(grep -Ei "HDMI|DisplayPort|Display|NVidia|AMD|ATI|Intel|HDA" /proc/asound/cards | head -n1 | awk '{print $1}')
-[ -z "$DETECT_CARD" ] && DETECT_CARD=0
-CARD=$DETECT_CARD
-
-# 语言选择
-echo "请选择语言 (1-中文, 2-English): "
-read lang_choice
-
-# 设置文本变量 (修复大小写与缺失变量)
-if [ "$lang_choice" = "2" ]; then
-    START_TEXT="=== HDMI Audio Fix Tool ==="
-    ERROR_NOT_FOUND="Error: Test audio file not found: $SAMPLE"
-    ERROR_PREPARE="Please put a sample.wav file in /data/local/tmp/ first."
-    LOADED_CONFIG="Previous configuration loaded: CARD=$CARD DEV=" # 修复了空变量显示
-    PLAYING_TEST="Playing test audio..."
-    TEST_COMPLETE="Test complete"
-    ITERATING="=== Iterating HDMI PCM Devices on Card $CARD ==="
-    TESTING_TEXT=">>> Testing plughw:${CARD}," # 修复了硬编码 0
-    INPUT_DEV="Please enter the PCM device number that had sound (e.g., 7): "
-    CONFIG_SAVED="Configuration saved to $CONF"
-    WRITING_INIT="=== Writing to init script ($INIT_SCRIPT) ==="
-    MOD_COMPLETE="Modification complete. HDMI audio should work after reboot."
-    MOD_SKIPPED="Modification skipped."
-    OVERWRITE_PROMPT="HDMI fix already exists. Overwrite? (y/n): "
-else
-    START_TEXT="=== HDMI 声音修复工具 ==="
-    ERROR_NOT_FOUND="错误: 测试音频文件不存在: $SAMPLE"
-    ERROR_PREPARE="请先准备一个 sample.wav 放到 /data/local/tmp/"
-    LOADED_CONFIG="已加载上次配置: CARD=$CARD DEV="
-    PLAYING_TEST="正在播放测试音频..."
-    TEST_COMPLETE="测试完成"
-    ITERATING="=== 遍历测试声卡 $CARD 的 PCM 设备 ==="
-    TESTING_TEXT=">>> 正在测试 plughw:${CARD},"
-    INPUT_DEV="请输入刚才有声音的 PCM 设备号 (例如 7): "
-    CONFIG_SAVED="配置已保存到 $CONF"
-    WRITING_INIT="=== 写入启动脚本 ($INIT_SCRIPT) ==="
-    MOD_COMPLETE="修改完成，重启后 HDMI 声音应自动生效。"
-    MOD_SKIPPED="跳过修改。"
-    OVERWRITE_PROMPT="启动脚本已存在修复配置，是否覆盖？(y/n): "
-fi
-
-echo "$START_TEXT"
-
-# 确认 sample.wav 存在
-if [ ! -f "$SAMPLE" ]; then
-    echo "$ERROR_NOT_FOUND"
-    echo "$ERROR_PREPARE"
+if [ ! -f "$TARGET" ]; then
+    echo "错误: 找不到 $TARGET（Error: target not found）" >&2
+    echo "请把 hdmi_fix_v2.sh 和本文件放在同一个目录后再执行。" >&2
     exit 1
 fi
 
-# 尝试加载上次配置
-if [ -f "$CONF" ]; then
-    . "$CONF"
-    echo "${LOADED_CONFIG}${DEV}"
-    echo "$PLAYING_TEST"
-    for ch in 0 1 2 3 4 5; do
-        alsa_amixer -c$CARD set 'IEC958',$ch on >/dev/null 2>&1
-    done
-    alsa_aplay -Dplughw:${CARD},${DEV} "$SAMPLE" >/dev/null 2>&1
-    echo "$TEST_COMPLETE"
-    exit 0
-fi
-
-# 激活 HDMI 通道
-for ch in 0 1 2 3 4 5; do
-    alsa_amixer -c$CARD set 'IEC958',$ch on >/dev/null 2>&1
-done
-
-echo ""
-echo "$ITERATING"
-# 自动抓取当前声卡实际存在的设备号
-DEVICES=$(ls /dev/snd/pcmC${CARD}D*p 2>/dev/null | grep -o 'D[0-9]*' | tr -d 'D')
-
-for dev in $DEVICES; do
-    echo "${TESTING_TEXT}${dev} ..."
-    # 放入后台播放，3秒后干掉它，防止卡死进程
-    alsa_aplay -Dplughw:${CARD},${dev} "$SAMPLE" >/dev/null 2>&1 &
-    PLAY_PID=$!
-    sleep 3
-    kill $PLAY_PID 2>/dev/null
-done
-
-echo ""
-echo -n "$INPUT_DEV"
-read DEV
-
-cat > "$CONF" <<EOF
-CARD=$CARD
-DEV=$DEV
-EOF
-echo "$CONFIG_SAVED"
-
-echo ""
-echo "$WRITING_INIT"
-mount -o remount,rw /system 2>/dev/null
-mount -o remount,rw / 2>/dev/null
-
-[ ! -f "${INIT_SCRIPT}.bak" ] && cp "$INIT_SCRIPT" "${INIT_SCRIPT}.bak"
-
-# 真正的覆盖逻辑：如果存在，先将旧配置整块删除
-if grep -q "$TAG_START" "$INIT_SCRIPT"; then
-    echo -n "$OVERWRITE_PROMPT"
-    read OVERWRITE
-    if [ "$OVERWRITE" != "y" ] && [ "$OVERWRITE" != "Y" ]; then
-        echo "$MOD_SKIPPED"
-        exit 0
-    fi
-    # 删除旧标签之间的所有内容
-    sed -i "/$TAG_START/,/$TAG_END/d" "$INIT_SCRIPT"
-fi
-
-# 写入 init.sh
-cat >> "$INIT_SCRIPT" <<EOF
-
-$TAG_START
-# HDMI 声音修复
-_CARD=\$(grep -Ei "HDMI|DisplayPort|Display|NVidia|AMD|ATI|Intel|HDA" /proc/asound/cards | head -n1 | awk '{print \$1}')
-[ -z "\$_CARD" ] && _CARD=$CARD
-
-# 开启数字通道
-for _ch in 0 1 2 3 4 5; do alsa_amixer -c\$_CARD set 'IEC958',\$_ch on >/dev/null 2>&1; done
-
-# 跨声卡映射：强制让系统默认坑位(C0D0/C0D3)指向真实发声节点
-if [ -e /dev/snd/pcmC\${_CARD}D${DEV}p ]; then
-    [ ! -L /dev/snd/pcmC0D0p ] && mv /dev/snd/pcmC0D0p /dev/snd/pcmC0D0p.bak 2>/dev/null
-    ln -sf /dev/snd/pcmC\${_CARD}D${DEV}p /dev/snd/pcmC0D0p
-    
-    [ ! -L /dev/snd/pcmC0D3p ] && mv /dev/snd/pcmC0D3p /dev/snd/pcmC0D3p.bak 2>/dev/null
-    ln -sf /dev/snd/pcmC\${_CARD}D${DEV}p /dev/snd/pcmC0D3p
-fi
-
-# 高版本系统的SELinux 补丁以防权限阻截
-setenforce 0 2>/dev/null
-$TAG_END
-EOF
-
-echo "$MOD_COMPLETE"
-
-
-# --- 庸医听诊模块 ---
-LOG_FILE="/data/local/tmp/hdmi_debug.log"
-
-echo "=== HDMI Fix Debug Log ===" > $LOG_FILE
-echo "Date: $(date)" >> $LOG_FILE
-echo "--- 1. 系统声卡列表 ---" >> $LOG_FILE
-cat /proc/asound/cards >> $LOG_FILE
-echo "--- 2. PCM 节点详情 ---" >> $LOG_FILE
-ls -l /dev/snd/pcm* >> $LOG_FILE
-echo "--- 3. 脚本写入结果 (init.sh) ---" >> $LOG_FILE
-grep -A 15 "$TAG_START" "$INIT_SCRIPT" >> $LOG_FILE
-echo "--- 4. SELinux 状态 ---" >> $LOG_FILE
-getenforce >> $LOG_FILE
-echo "--- 5. 当前配置参数 ---" >> $LOG_FILE
-cat "$CONF" >> $LOG_FILE
-
-if [ "$lang_choice" = "2" ]; then
-    echo "Diagnostic log saved to $LOG_FILE. Please attach it to your GitHub Issue."
-else
-    echo "诊断日志已保存至 $LOG_FILE。如果仍无声音，请将此文件内容贴到任何能联系到我的地方。"
-fi
+echo "[提示] 本脚本已弃用，正在转发到 hdmi_fix_v2.sh / Deprecated, forwarding..." >&2
+exec sh "$TARGET" "$@"

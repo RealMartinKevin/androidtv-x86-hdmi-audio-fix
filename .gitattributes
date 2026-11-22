@@ -1,0 +1,8 @@
+# 这些脚本在 Android 设备上由 /system/bin/sh 执行，
+# 行尾必须是 LF。Windows 上检出为 CRLF 会直接报 syntax error。
+* text=auto
+*.sh text eol=lf
+fix text eol=lf
+hdmi_audio_test.sh(chs_eng) text eol=lf
+
+*.wav binary
