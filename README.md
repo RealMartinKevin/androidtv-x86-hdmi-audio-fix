@@ -143,8 +143,41 @@ adb reboot
 | `hdmi_fix_v2.sh` | **主脚本**，v3.0，唯一需要用的那个 |
 | `hdmi_fix_restore.sh` | 撤销脚本 |
 | `sample.wav` | 测试音频 |
+| `tests/e2e.sh` | 离线回归测试，见下节 |
 | `fix` | 已弃用，转发到 `hdmi_fix_v2.sh`，仅为兼容旧链接保留 |
 | `hdmi_audio_test.sh(chs_eng)` | 已弃用，同上（旧的双语版本） |
+
+---
+
+## 离线回归测试
+
+改动脚本后不必上真机就能验证大部分逻辑：
+
+```bash
+bash tests/e2e.sh
+```
+
+原理是把脚本里的绝对路径替换成假文件树（假的 `/proc/asound`、`/dev/snd`、
+`init.sh`），再用桩程序替换 `alsa_amixer` / `alsa_aplay` / `mount` / `id`，
+最后交给**真实的 mksh**（设备上的 `/system/bin/sh`）跑完整流程。
+
+覆盖的场景：
+
+| 场景 | 验证内容 |
+|---|---|
+| A | 首次安装：选卡、IEC958 计数、配置写入、软链接、init.sh 写入、片段语法 |
+| B | 重复安装幂等：标签不重复、软链接不嵌套、不新增 `.bak` |
+| C | `--apply` 只重建软链接，不碰 `init.sh` |
+| D | `--status` 七个分节完整、能读到 ELD 显示器名 |
+| E | ELD 无效时**不**劫持 `C0D0` |
+| F | 双声卡场景选中 HDMI 卡（card1）而不是模拟卡（card0） |
+| G | 撤销脚本删片段、保留原内容 |
+
+可选依赖：`mksh`（强烈建议，装不到时该组检查会标记 SKIP 并用 `sh` 代替）、
+`shellcheck`、`dash`。
+
+**测不到的部分**：`alsa_amixer` 的真实 control 名、`/proc/asound/*/eld#*`
+的实际字段、以及驱动层面的时序——这些只有真机能验。
 
 ---
 
@@ -163,5 +196,10 @@ Modes: no args = interactive install, `--status` = diagnose only, `--apply` = re
 config (use after hot-plugging HDMI). Unlike older versions, this does **not** run
 `setenforce 0`, and only hijacks the primary output `C0D0` when an active HDMI display is
 detected via ELD.
+
+`tests/e2e.sh` runs an offline regression suite: it rewrites the script's absolute paths
+into a fake filesystem tree, stubs out `alsa_amixer` / `alsa_aplay` / `mount` / `id`, and
+executes the full flow under real `mksh`. 45 assertions covering card selection, device
+enumeration, ELD gating, symlink idempotency and init.sh rewriting.
 
 License: Apache-2.0

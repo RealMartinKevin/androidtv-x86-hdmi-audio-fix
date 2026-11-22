@@ -206,7 +206,7 @@ write_init() {
     [ -f "${INIT_SCRIPT}.hdmifix.bak" ] || cp "$INIT_SCRIPT" "${INIT_SCRIPT}.hdmifix.bak" 2>/dev/null
 
     if grep -q "$TAG_START" "$INIT_SCRIPT" 2>/dev/null; then
-        echo -n "  init.sh 里已存在修复片段，是否覆盖？(y/N): "
+        printf "%s" "  init.sh 里已存在修复片段，是否覆盖？(y/N): "
         read _ow
         case "$_ow" in
             y|Y) ;;
@@ -265,8 +265,9 @@ if [ "\$_HIJACK_PRIMARY" = "1" ] && _hdmi_eld_ok; then
     [ -e /dev/snd/pcmC\${_CARD}D\${_DEV}p ] && _hdmi_link "/dev/snd/pcmC\${_CARD}D\${_DEV}p" /dev/snd/pcmC0D0p
 fi
 
-# 说明: 本段不修改 SELinux 状态。旧版在这里执行 setenforce 0 属于无必要的
-# 安全降级，已移除。若确认某台机器必须关闭，请自行评估风险后添加。
+# 说明: 本段不修改 SELinux 的强制状态。旧版在这里额外把 SELinux 关成
+# Permissive，已移除（android-x86 默认就是 Permissive，那行只有风险没有收益）。
+# 若确认某台机器必须关闭，请自行评估风险后添加。
 $TAG_END
 EOF
 
@@ -380,6 +381,7 @@ need_tools
 # --- 已安装配置，立即生效（热插拔 HDMI 后用这个）---
 if [ "$MODE" = "apply" ]; then
     [ -f "$CONF" ] || die "没有已保存的配置 $CONF，请先不带参数运行一次安装。"
+    # shellcheck source=/dev/null
     . "$CONF"
     if [ -z "$CARD" ] || [ -z "$DEV" ]; then
         die "配置内容不完整: $CONF"
